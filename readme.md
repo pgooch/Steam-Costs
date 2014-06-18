@@ -81,11 +81,12 @@ The JSON scrape data will contain a record for each Steam ID found, each record 
 An example stats and JSON file is included in the repository.
 
 ### Known Issues
-There are 2 currently known issues
 
 1. Some items are showing with a blank genre, I have yet to confirm whether this is because they are missing a genre (in which case they should fall under "No Genre Given" or whether the scraper is simply missing their genre).
 
 2. Some items show up multiple times with incorrect values, for example Serious Sam Classic: The First Encounter (Steam ID 41050) and Serious Sam Classic: The Second Encounter (Steam ID 41060) both showing with a $99.99 regular price but in reality are not available outside of collections. Attempts to rectify this have been unsuccessful, but if you have any ideas (outside of a complete site scrape or manually cataloging items that behave this way) then let me know and I'll adjust the scraper accordingly.
+
+3. Some items may not truly fit the category they are in, for example the Steam Greenlight Submission Fee (Steam ID 219820) is listed in the Games category despite the fact that it is a fee. This is because of how steam stores it. There may be additional items that are mis-categorized for one reason or another but outside of manually excluding them I could not determine a way to filter them out.
 
 ### Version History
 ##### 1.0.0
