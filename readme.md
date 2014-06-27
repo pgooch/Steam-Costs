@@ -120,6 +120,7 @@ An example stats and JSON file is included in the repository.
 ### Version History
 ##### 1.0.0
 - Initial Release
+
 ##### 1.1.0
 - Changed the way the summary was displayed, now broken up by category into tables. 
 - Added a list of currently discounted items to the summary display.
