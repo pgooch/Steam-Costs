@@ -139,45 +139,164 @@ if(isset($file)){
 	}
 }
 
-// We now have a detailed scrape of the entire store (well, the categories we care about) and we can now do the fun stuff.
-$titles_accounted_for = 0;
-$current_items_on_sale = 0;
-$savings_percent_total = 0;// used to determin avg amount off
-$total_price = 0.00;
-$current_price = 0.00;
-$price_by_category = array();
-$price_by_platform = array();
-$price_by_genre = array();
-
-// Loop through and do all the additions
+// Loop through the scrape data and do the maths needed for the summary stats
+$discounted_titles = array(); // used for that list of discounted titles.
 foreach($scrape_data as $steam_id => $data){
-	$titles_accounted_for += $data['times_seen'];
-	$total_price += $data['price']['regular'];
-	$current_price += $data['price']['current'];
-	if(isset($data['discount'])){
-		$current_items_on_sale++;
-		$savings_percent_total += $data['discount'];
+	// The majority of the data will be done on a category basis, this is the default array so we can blindly add without checking later.
+	if(!isset($category_data[$data['category']])){
+		$category_data[$data['category']] = array(
+			'Category' => $data['category'],
+			'Items' => 0,
+			'Disc Items' => 0,
+			'Free Items' => 0,
+			'Reg Total' => 0.00,
+			'Cur Total' => 0.00,
+			'Avg Disc %' => 0.00,
+			'Avg Disc $' => 0.00,
+			'Total Disc %' => 0.00, // This adds the discount amount up, used to determine Avg Disc %
+			'Total % Disc' => 0,
+			'Total Disc $' => 0.00,
+		);
 	}
-	if(!isset($price_by_category[$data['category']])){
-		$price_by_category[$data['category']] = 0.00;
+	// From here most the additions are simple.
+	$category_data[$data['category']]['Items']++;
+	if($data['price']['regular']!=$data['price']['current']){
+		$category_data[$data['category']]['Disc Items']++;
+		$category_data[$data['category']]['Total Disc %']+=($data['price']['current']/$data['price']['regular'])*100;
+		$discounted_titles[$data['name']] = '%'.round(($data['price']['current']/$data['price']['regular'])*100).' Off (Was: $'.$data['price']['regular'].' Now: $'.$data['price']['current'].')';
 	}
-	$price_by_category[$data['category']] += $data['price']['regular'];
-
-	// By Platform maths
+	if(preg_replace('~[0-9\.]+~','',$data['price']['regular'])!=''){
+		$category_data[$data['category']]['Free Items']++;
+	}
+	$category_data[$data['category']]['Reg Total']+=$data['price']['regular'];
+	$category_data[$data['category']]['Cur Total']+=$data['price']['current'];
+	
+	// By Platform Data
 	foreach($data['platforms'] as $g => $platform){
-		if(!isset($price_by_platform[$platform])){
-			$price_by_platform[trim($platform)] = 0.00;
-		}
-		$price_by_platform[trim($platform)] += $data['price']['regular'];
+		$by_platform[trim($platform)]['Platform'] = ucwords($platform);	
+		$by_platform[trim($platform)]['Items']++;
+		$by_platform[trim($platform)]['Reg Total'] += $data['price']['regular'];
+		$by_platform[trim($platform)]['Avg $'] = ($by_platform[trim($platform)]['Avg $']*($by_platform[trim($platform)]['Items']-1)/$by_platform[trim($platform)]['Items'])+($data['price']['regular']/$by_platform[trim($platform)]['Items']);
 	}
-
+	
 	// By Genre maths
 	foreach($data['genres'] as $g => $genre){
-		if(!isset($price_by_genre[$genre])){$price_by_genre[$genre] = 0.00;}
-		$price_by_genre[trim($genre)] += $data['price']['regular'];
+		$by_genre[trim($genre)]['Genre'] = ucwords($genre);	
+		$by_genre[trim($genre)]['Items']++;
+		$by_genre[trim($genre)]['Reg Total'] += $data['price']['regular'];
+		$by_genre[trim($genre)]['Avg $'] = ($by_genre[trim($genre)]['Avg $']*($by_genre[trim($genre)]['Items']-1)/$by_genre[trim($genre)]['Items'])+($data['price']['regular']/$by_genre[trim($genre)]['Items']);
+	}
+}
+// Do some additional post scrape loop processing.
+// Calculate additional category stats
+$total_stats = array();
+foreach($category_data as $category => $data){
+	$category_data[$category]['Avg Disc %'] = $data['Total Disc %']/$data['Disc Items'];
+	$category_data[$category]['Avg Disc $'] = ($data['Reg Total']-$data['Cur Total'])/$data['Disc Items'];
+	$category_data[$category]['Total % Disc'] = ($data['Reg Total']-$data['Cur Total'])/$data['Reg Total'];
+	$category_data[$category]['Total Disc $'] = $data['Reg Total']-$data['Cur Total'];
+	// Calculate the Total Stats, we can use category as a base since it has all the data
+	$total_stats['Items'] += $data['Items'];
+	$total_stats['Regular Price'] += $data['Reg Total'];
+	$total_stats['Current Price'] += $data['Cur Total'];
+	$total_stats['Free Items'] += $data['Free Items'];
+	$total_stats['Disc Items'] += $data['Disc Items'];
+	$total_stats['Total Disc %'] += $data['Total Disc %'];
+	$total_stats['Total Disc $'] += $data['Total Disc $'];
+}
+
+// Clean up the table data for display
+$by_platform 	= prettify_table($by_platform);
+$by_genre 		= prettify_table($by_genre);
+				  ksort($by_genre);
+$category_data 	= prettify_table($category_data);
+ksort($discounted_titles); 
+
+// Were going to break the big $category_data into smaller pieces for display.
+$discounts_by_category = array();
+$totals_by_category = array();
+foreach($category_data as $category => $data){
+	foreach($data as $item => $value){
+		switch($item){
+			// To both
+			case 'Category':
+			case 'Disc Items':
+				$discounts_by_category[$category][$item] = $value;
+				$totals_by_category[$category][$item] = $value;
+			break;
+			// To discounts
+			case 'Avg Disc %':
+			case 'Avg Disc $':
+			case 'Total % Disc':
+			case 'Total Disc $':
+				$discounts_by_category[$category][$item] = $value;
+			break;
+			// to totals
+			case 'Items':
+			case 'Free Items':
+			case 'Reg Total':
+			case 'Cur Total':
+				$totals_by_category[$category][$item] = $value;
+			break;
+		}
 	}
 }
 
+// If your in a browser we need to make sure you know it's preformatted.
+if(PHP_SAPI!='cli'){
+	echo '<pre>';
+}else{
+	echo "                          \n";// All those spaces cover the "Processing Page" message.
+}
+
+// Display the actual stats
+ob_start();
+echo 'Steam Pricing Breakdown '.date('F jS, Y g:ia T')."\n";
+echo "\n";
+echo 'Items Accounted For: '.number_format($total_stats['Items'])."\n";
+echo 'Regular Price: '.cash_format($total_stats['Regular Price'])."\n";
+echo 'Current Price: '.cash_format($total_stats['Current Price'])."\n";
+echo 'Number of Free Items: '.number_format($total_stats['Free Items']).' (%'.round($total_stats['Free Items']/$total_stats['Items'],3).')'."\n";
+echo 'Current Number of Discounted Items: '.number_format($total_stats['Disc Items']).' (%'.round($total_stats['Disc Items']/$total_stats['Items'],3).')'."\n";
+echo 'Current Savings: %'.round(($total_stats['Regular Price']-$total_stats['Current Price'])/$total_stats['Regular Price'],3).' ('.cash_format($total_stats['Regular Price']-$total_stats['Current Price']).')'."\n";
+echo "\n";
+echo 'Average Price: '.cash_format($total_stats['Regular Price']/($total_stats['Items']-$total_stats['Free Items'])).' ('.cash_format($total_stats['Regular Price']/$total_stats['Items']).' including free items)'."\n";
+echo 'Average Current Price: '.cash_format($total_stats['Current Price']/($total_stats['Items']-$total_stats['Free Items'])).' ('.cash_format($total_stats['Current Price']/$total_stats['Items']).' including free items)'."\n";
+echo 'Average Sale Discount: %'.round($total_stats['Total Disc %']/$total_stats['Disc Items'],3).' ('.cash_format(($total_stats['Regular Price']-$total_stats['Current Price'])/$total_stats['Disc Items']).')'."\n";
+echo "\n";
+new make_ascii_table('Totals By Category',$totals_by_category);
+echo "\n";
+new make_ascii_table('Discounts By Category',$discounts_by_category);
+echo "\n";
+new make_ascii_table('By Platform Breakdown',$by_platform);
+echo "\n";
+new make_ascii_table('By Genre Breakdown',$by_genre);
+echo "\n";
+echo 'Current Discounts'."\n";
+make_ascii_list($discounted_titles);
+$stats=ob_get_flush();
+
+// Were going to try and save this, if we have the permissions needed to
+if($save){
+	if(!isset($file)){
+		$date = date('YmdHis');
+		$stats_file = @fopen($date.'.stats.txt','w');
+		if($stats_file==false){
+			echo 'The script was unable to save the stat and scrape files.';
+		}else{
+			fwrite($stats_file,$stats);
+			$scrape_file = fopen($date.'.scrape.json','w');
+			fwrite($scrape_file,json_encode($scrape_data,JSON_PRETTY_PRINT));
+			echo 'This information has been saved to "'.$date.'.stats.txt'.'" along with the data used to create it to "'.$date.'.scrape.json'.'".'."\n";
+		}
+	}
+}
+		// And a little final cleanup
+if(PHP_SAPI!='cli'){
+	echo '</pre>';
+}else{
+	echo "\n";
+}
 /* Random Example Entry
     [271670] => Array
         (
@@ -208,65 +327,36 @@ foreach($scrape_data as $steam_id => $data){
         )
 */
 
-// If your in a browser we need to make sure you know it's preformatted.
-if(PHP_SAPI!='cli'){
-	echo '<pre>';
-}else{
-	echo "                          \n\n\n";// All those spaces cover the "Processing Page" message.
-}
-// Output the final display, this is super simple since I want this runable via the command line and be readable.
-ob_start();
-echo 'Steam Pricing Breakdown '.date('F jS, Y g:ia T')."\n";
-echo "\n";
-echo 'Items Accounted For: '.number_format($titles_accounted_for)."\n";
-echo 'Total Price: '.cash_format($total_price)."\n";
-echo 'Current Price: '.cash_format($current_price)."\n";
-echo 'Current Number of Items on Sale: '.number_format($current_items_on_sale)."\n";
-echo 'Current Savings: %'.number_format(($total_price-$current_price)/$total_price,5).' ('.cash_format($total_price-$current_price).')'."\n";
-echo "\n";
-echo 'Average Price: '.cash_format($total_price/$titles_accounted_for)."\n";
-echo 'Average Current Price: '.cash_format($current_price/$titles_accounted_for)."\n";
-echo 'Average Sale Discount: %'.round($savings_percent_total/$current_items_on_sale,3).' ('.cash_format(($total_price-$current_price)/$current_items_on_sale).')'."\n";
-echo "\n";
-echo 'Regular Price Breakdown by Category'."\n";
-$price_by_category=array_map('cash_format',$price_by_category);
-make_ascii_list($price_by_category);
-echo "\n";
-echo 'Regular Price Breakdown by Platform'."\n";
-$price_by_platform=array_map('cash_format',$price_by_platform);
-make_ascii_list($price_by_platform);
-echo "\n";
-echo 'Regular Price Breakdown by Genre'."\n";
-$price_by_genre=array_map('cash_format',$price_by_genre);
-make_ascii_list($price_by_genre);
-echo "\n";
-$stats=ob_get_flush();
-
-// Were going to try and save this, if we have the permissions needed to
-if($save){
-	if(!isset($file)){
-		$date = date('YmdHis');
-		$stats_file = @fopen($date.'.stats.txt','w');
-		if($stats_file==false){
-			echo 'The script was unable to save the stat and scrape files.';
-		}else{
-			fwrite($stats_file,$stats);
-			$scrape_file = fopen($date.'.scrape.json','w');
-			fwrite($scrape_file,json_encode($scrape_data,JSON_PRETTY_PRINT));
-			echo 'This information has been saved to "'.$date.'.stats.txt'.'" along with the data used to create it to "'.$date.'.scrape.json'.'".'."\n";
-		}
-		// And a little final cleanup
-		if(PHP_SAPI!='cli'){
-			echo '</pre>';
-		}else{
-			echo "\n\n";
-		}
-	}
-}
-
 // This is the entire array created during the scrape, it's pretty big and you probably don't care about those details unless your developing something
 // print_r($scrape_data);
 
+// This will loop through an array and format the data for display based on column name
+function prettify_table($array){
+	foreach($array as $row => $data){
+		foreach($data as $col => $value){
+			switch($col){
+				case 'Items':
+				case 'Disc Items':
+				case 'Free Items':
+					$value = number_format($value);
+				break;
+				case 'Total % Disc':
+				case 'Avg Disc %':
+					$value = '%'.number_format($value,3);
+				break;
+				case 'Reg Total':
+				case 'Avg $':
+				case 'Cur Total':
+				case 'Avg Disc $':
+				case 'Total Disc $':
+					$value = cash_format($value);
+				break;
+			}
+			$array[$row][$col] = $value;
+		}
+	}
+	return $array;
+}
 // This is just a simple replacer function.
 function get_url($base_url,$replacements){
 	foreach($replacements as $key => $value){
@@ -277,11 +367,18 @@ function get_url($base_url,$replacements){
 // A single place to adjust how the money values are displayed
 function cash_format($price){
 	$price = round($price,2);
-	return '$'.number_format($price,2);
+	return '$'.number_format(round($price,2),2);
 }
 // Takes an array and turns it into a formatted, monospaced list.
-function make_ascii_list($array){
+function make_ascii_list($array,$map_array='',$include_total=false){
+	// Some basic stuff to make things cleaner
 	ksort($array);
+	if($include_total){
+		$array['Total'] = array_sum($array);
+	}
+	if($map_array!=''){
+		$array=array_map($map_array,$array);
+	}
 	// Get the longest keys 
 	$key_len = 0;
 	foreach($array as $key => $val){
@@ -292,42 +389,107 @@ function make_ascii_list($array){
 		echo ucwords(sprintf('%-'.$key_len.'s',$key)).': '.$val."\n";
 	}
 }
-// Takes a multidimensional array and creates an ascii table from it (ended up not using it, but may in the future);
-function make_ascii_table($array){
-	// Determine how long the cells need to be
-	foreach($array as $g => $data){
-		foreach($data as $col => $cell){
-			if(!isset($cols[$col])){
-				$cols[$col] = strlen($col);
-			}
-			if(strlen($cell)>$cols[$col]){
-				$cols[$col] = strlen($cell);
+// This class takes multi-dimensional arrays and turns them into ascii tabled
+class make_ascii_table{
+	// These will be filled for you once the class is called
+	private $cols = array();
+	private $total_cols = 0;
+	private $table_width = 0;
+	private $title = '';
+	private $wrapped = true; // This determines if the table is wrapped
+	function __construct($title='',$array){
+		// Prep for display
+		$this->determine_cols($array);
+		$this->wrapped = $wrapped;
+		$this->table_width = array_sum($this->cols)+($this->total_cols*3)+1;
+		// This is where we start outputting the table.
+		$this->output_title($title);
+		$this->output_horizontal_line();
+		$this->output_header_row();
+		$this->output_horizontal_line();
+		$this->output_data($array);
+		$this->output_horizontal_line();
+	}
+	// Gets some base information regarding the columns and their contents (lengths mostly);
+	function determine_cols($array){
+		// This gets the longest length per column
+		foreach($array as $g => $data){
+			foreach($data as $col => $cell){
+				if(!isset($this->cols[$col])){
+					$this->cols[$col] = strlen($col);
+				}
+				if(strlen($cell)>$this->cols[$col]){
+					$this->cols[$col] = strlen($cell);
+				}
 			}
 		}
+		// This is just the number of columns
+		$this->total_cols = count($this->cols);
 	}
-	// Output the header row
-	$total_cols = count($cols);
-	$row = 0;
-	foreach($cols as $col => $len){
-		$row++;
-		echo sprintf('%-'.$len.'s',$col).' ';
-		if($total_cols>$row){
-			echo ': ';
+	// This will output a given array as a line
+	function output_row($array,$intersections=false){
+		if($intersections){
+			echo '+-';
 		}else{
-			echo "\n";
+			echo '| ';
 		}
-	}
-	// Output the table data
-	foreach($array as $g => $data){
 		$row = 0;
-		foreach($cols as $col => $len){
+		foreach($array as $col => $value){
 			$row++;
-			echo sprintf('%-'.$len.'s',$data[$col]).' ';
-			if($total_cols>$row){
-				echo ': ';
+			echo $value;			
+			if($this->total_cols>$row){
+				if($intersections){
+					echo '-+-';
+				}else{
+					echo ' | ';
+				}
 			}else{
+				if($intersections){
+					echo '-+';
+				}else{
+					echo ' |';
+				}
 				echo "\n";
 			}
+		}
+	}
+	// This will output the title if there is one
+	function output_title($title){
+		if($title!=''){
+			$title_lenth = strlen($title);
+			$padding = $this->table_width-$title_lenth;
+			if($padding<0){
+				$padding=0;
+			}else{
+				$padding = floor($padding/2);
+			}
+			echo str_repeat(' ',$padding).$title."\n";
+		}
+	}
+	// This outputs a basic horizontal line with appropriate dividers between columns
+	function output_horizontal_line(){
+		$divider = array();
+		foreach($this->cols as $col => $len){
+			$divider[$col] = str_repeat('-',$len);
+		}
+		echo $this->output_row($divider,true);
+	}
+	// This will output the col names for the header row
+	function output_header_row(){
+		$header = array();
+		foreach($this->cols as $col => $len){
+			$header[$col] = sprintf('%-'.$len.'s',$col);
+		}
+		echo $this->output_row($header);
+	}
+	// This loops through the data and outputs each row
+	function output_data($array){
+		foreach($array as $g => $data){
+			$row = array();
+			foreach($this->cols as $col => $len){
+				$row[$col] = sprintf('%-'.$len.'s',$data[$col]);
+			}
+			echo $this->output_row($row);
 		}
 	}
 }
